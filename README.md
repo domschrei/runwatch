@@ -5,6 +5,7 @@ This utility helps to execute a command on a Linux system under (RSS) memory, ti
 
 It is similar to [pshved/timeout](https://github.com/pshved/timeout) in that you can set run time and memory limits for a given command. 
 However, runwatch has the ability to pin the execution of each command to a user-provided number of cores and can also measure memory of child processes.
+Runwatch can also schedule multiple "homogeneous" commands (same resources, time and memory limits) in a simple fashion.
 In turn, runwatch requires **two free cores** of its own for scheduling and for frequent memory and time limit checking.
 
 ## Requirements
