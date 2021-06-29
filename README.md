@@ -1,47 +1,62 @@
+
 # runwatch
 
-This utility helps to execute a command on a Linux system under memory, time, and CPU constraints, for example for performance evaluations or for basic scheduling of tasks on a parallel machine.
+This utility helps to execute a command on a Linux system under (RSS) memory, time, and CPU constraints, for example for performance evaluations or for basic scheduling of tasks on a parallel machine.
 
 It is similar to [pshved/timeout](https://github.com/pshved/timeout) in that you can set run time and memory limits for a given command. 
-However, runwatch has the ability to pin the execution of a command to a user-provided set of CPUs and measures memory based on [Proportional Set Size (PSS)](https://en.wikipedia.org/wiki/Proportional_set_size) which is more accurate than Residual Set Size (RSS) in cases where the executed command has child (or grand-child ...) processes with some memory shared among them.
-In turn, runwatch is slower, hence it should be executed on a separate, otherwise idle CPU (you can do that with a simple program option).
-
-Also, runwatch should play nicely with GNU parallel when you map different executions to different CPU sets.
+However, runwatch has the ability to pin the execution of each command to a user-provided number of cores and can also measure memory of child processes.
+In turn, runwatch requires **two free cores** of its own for scheduling and for frequent memory and time limit checking.
 
 ## Requirements
 
-Python 3 and the `psutil` package (`pip install psutil`).
+GCC compiler. Run `bash compile.sh` to build.
 
 ## Usage
 
 ```
-./runwatch [-h|--help] [-v|--verbose] [<timelim>] [<memlim>] [cpu<i>..<j> | cpu<i>:<j> | cpu<i>[ cpu<j>[ ...]]] [wcpu<i>] <command>
+./runwatch <tasks_file> [-p|-np|--processes <num_parallel_processes>] [-t|--threads-per-process <num_threads_per_process>] [-T|--timelim <timelimit_seconds>] [-M|--memlim <rss_memlimit_kilobytes>] [-d|--directory <output_log_directory>] [-r|--recurse-children] [-q|--quiet]
 ```
 
-For example, `cpu0 cpu1 cpu2` is equivalent to `cpu0:2` or `cpu0..2` and pins <command> to CPUs #0 through #2.  
-Use `wcpu{i}` ("watching CPU") to pin the watching parent process to CPU #`{i}`.
+Assume you have eight physical cores and each command you execute runs two parallel threads. You would use the parameters `-np 3 -t 2` to have 3*2=6 "worker" threads running the commands and to have the remaining two cores left for runwatch.
 
-Formatting of run time limits: {number}{unit} where {unit} may be ms, s, min, or h (case insensitive).  
-Formatting of memory limits: {number}{unit} where {unit} may be b, kb, mb, gb, or tb (case insensitive).
+Each line in <tasks_file> must begin with a unique instance id (e.g. the current line number) followed by a whitespace and then the command to execute.
 
-The output of the program is left untouched with the exception of a single line with eight whitespace-separated words printed to stdout right before exiting:
+For each command, a line of this form is printed to stdout:
 
 ```
-RUNWATCH_RESULT {EXIT|TIMEOUT|MEMOUT} RETVAL {return value} TIME_SECS {wallclock time elapsed} MEMPEAK_KBS {memory peak}
+{job id} RUNWATCH_RESULT {EXIT|TIMEOUT|MEMOUT} RETVAL {return value} TIME_SECS {wallclock time elapsed} MEMPEAK_KBS {memory peak}
 ```
-(Also, you obviously get additional output when using the `-v` flag.)
 
 ### Example
 
-`./runwatch 5min 8gb cpu0:3 wcpu4 ./mallob -mono=f.cnf`
+The text file `commands` contains an example list of commands. The first argument to the program `test` is the number of threads and the second argument is the time limit (or no argument for running indefinitely).
 
-This command limits the execution of `./mallob -mono=f.cnf` to five minutes of wallclock time and 8GiB of (effective) RAM and pins it to CPUs #0 through #3.
-CPU #4 is used for monitoring.
+Run `bash compile_test.sh` and then try out the program with this command:
+
+`./runwatch commands -p 3 -t 2 -T 2 -M 10000 -d log/|grep RESULT`
+
+This limits each command to two seconds of wallclock time and to 10MB of memory.
+On my machine, this leads to something like this:
+
+```
+3 RUNWATCH_RESULT EXIT RETVAL 0 TIME_SECS 1.00386 MEMPEAK_KBS 7308
+4 RUNWATCH_RESULT EXIT RETVAL 0 TIME_SECS 0.0128961 MEMPEAK_KBS 224
+5 RUNWATCH_RESULT EXIT RETVAL 0 TIME_SECS 0.00407314 MEMPEAK_KBS 224
+1 RUNWATCH_RESULT TIMEOUT RETVAL 0 TIME_SECS 2.0015 MEMPEAK_KBS 5396
+2 RUNWATCH_RESULT TIMEOUT RETVAL 0 TIME_SECS 2.00136 MEMPEAK_KBS 7328
+6 RUNWATCH_RESULT MEMOUT RETVAL 0 TIME_SECS 1.00076 MEMPEAK_KBS 32500
+9 RUNWATCH_RESULT MEMOUT RETVAL 0 TIME_SECS 1.00076 MEMPEAK_KBS 25128
+10 RUNWATCH_RESULT EXIT RETVAL 0 TIME_SECS 0.102789 MEMPEAK_KBS 224
+7 RUNWATCH_RESULT TIMEOUT RETVAL 0 TIME_SECS 2.00103 MEMPEAK_KBS 5296
+8 RUNWATCH_RESULT TIMEOUT RETVAL 0 TIME_SECS 2.0011 MEMPEAK_KBS 7168
+```
+
+In addition, the output of the respective commands can be found in the directories `log/<job-id>/`.
 
 ## Caveats
 
 Note that `runwatch` uses `SIGINT` (interrupt signal) for gracefully stopping the command when hitting a (time|mem)out, so it is important that the program handles this signal properly. (Otherwise, if the program does not react to the signal, after a certain timeout `SIGKILL` will be used.)
 
-Very short runtimes (of a few milliseconds) may be handled and reported inaccurately. The runtime of a program displayed in the result line may differ slightly from the program's actual run time. On a not too crowded system this effect should be in terms of a couple milliseconds.
+Very short runtimes (of few milliseconds) may be reported inaccurately. The runtime of a program displayed in the result line may differ slightly from the program's actual run time. On a not too crowded system this effect should be in terms of few milliseconds.
 
-runwatch has no true power over what its child processes are doing, in particular the executed program could just re-map the CPUs it may compute on to something else. So make sure that the program does not internally call something like `sched_setaffinity` itself when using it with CPU pinning.
+runwatch has no power over what its child processes are doing, in particular the executed program could just re-map the CPUs it may compute on to something else. So make sure that the program does not internally call something like `sched_setaffinity` itself when using it with CPU pinning.
