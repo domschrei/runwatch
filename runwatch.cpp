@@ -69,6 +69,27 @@ void pinProcessToCpu(pid_t pid, int firstCpu, size_t numCpus) {
 	sched_setaffinity(pid, sizeof(cpuSet), &cpuSet);
 }
 
+std::vector<pid_t> getRecursiveChildren(pid_t basePid) {
+
+    std::vector<pid_t> result;
+    result.push_back(basePid);
+
+    // Get child information for this PID
+    auto childFile = "/proc/" + std::to_string(basePid) + "/task/"
+        + std::to_string(basePid) + "/children";
+    std::ifstream children_stream(childFile.c_str(), std::ios_base::in);
+    if (!children_stream.good()) return result;
+
+    // Recurse
+    pid_t childPid;
+    while (children_stream >> childPid) {
+        auto childPids = getRecursiveChildren(childPid);
+        result.insert(result.end(), childPids.begin(), childPids.end());
+    }
+
+    return result;
+}
+
 long getResidentSetSize(pid_t pid, bool recurse) {
 
     using std::ios_base;
@@ -112,6 +133,13 @@ long getResidentSetSize(pid_t pid, bool recurse) {
     }
 
     return rss;
+}
+
+void signalProcessAndAllChildren(pid_t pid, int sig) {
+    auto pids = getRecursiveChildren(pid);
+    for (pid_t p : pids) {
+        kill(p, sig);
+    }
 }
 
 struct Process {
@@ -291,7 +319,7 @@ int main(int argc, const char** argv) {
 
                     if (allExiting) {
                         // Forward interruption to child
-                        kill(child.pid, SIGINT);
+                        signalProcessAndAllChildren(child.pid, SIGINT);
                         continue;
                     }
                     
@@ -301,7 +329,7 @@ int main(int argc, const char** argv) {
 
                         if (timelimSecs > 0 && time - child.starttime > timelimSecs) {
                             // Timeout
-                            kill(child.pid, SIGINT);
+                            signalProcessAndAllChildren(child.pid, SIGINT);
                             child.status = STATUS_TIMEOUT;
                             child.koCounter++;
 
@@ -311,14 +339,15 @@ int main(int argc, const char** argv) {
                             child.mempeakKbs = std::max(child.mempeakKbs, rssKbs);
                             if (memlimKbs > 0 && child.mempeakKbs > memlimKbs) {
                                 // Memout
-                                kill(child.pid, SIGINT);
+                                signalProcessAndAllChildren(child.pid, SIGINT);
                                 child.status = STATUS_MEMOUT;
                                 child.koCounter++;
                             }
                         }
 
                         // Hardkill if unresponsive
-                        if (child.koCounter >= 5) kill(child.pid, SIGKILL);
+                        if (child.koCounter >= 5)
+                            signalProcessAndAllChildren(child.pid, SIGKILL);
                     }
                 }
             }
